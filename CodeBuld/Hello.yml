@@ -1,0 +1,167 @@
+---
+Description: The IAM Role used to build the hello application.
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resources.
+    Type: String
+    Default: DevOpsProfessional
+
+  RepositoryName:
+    Description: Name of the repository.
+    Type: String
+    Default: Hello
+
+  InputBucket:
+    Description: Bucket used to feed the repository file in zip format.
+    Type: String
+    Default: jbennettconsulting
+
+  InputKey:
+    Description: The key value for the file in zip format.
+    Type: String
+    Default: codebuild.zip
+
+  ArtifactBucket:
+    Description: Bucket where CodeBuild artifacts are deposited.
+    Type: String
+    Default: jbennettconsulting
+
+  ArtifactPath:
+    Description: The path inside the ArtifactBucket where artifacts are deposited.
+    Type: String
+    Default: artifacts
+
+  ArtifactKey:
+    Description: The artifact name.
+    Type: String
+    Default: hello.out
+
+Resources:
+  Repository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        S3:
+          Bucket: !Ref InputBucket
+          Key: !Ref InputKey
+      RepositoryDescription: !Join [ " ", [ !Ref InputKey, repository ] ]
+      RepositoryName: !Ref RepositoryName
+
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    DependsOn: BuildRole
+    Properties:
+      Artifacts:
+        Name: !Ref ArtifactKey
+        Path: !Ref ArtifactPath
+        Location: !Ref ArtifactBucket
+        Type: S3
+      Description: DevOps professional hello world build project
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:4.0
+        Type: LINUX_CONTAINER
+      Name: !Ref RepositoryName
+      ServiceRole: !Ref BuildRole
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt Repository.CloneUrlHttp
+      SourceVersion: refs/heads/master
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Description: !Join [ " ", [ !Ref RepositoryName, "application build role." ] ]
+      Path: /
+      RoleName: !Join [ "", [ !Ref RepositoryName, CodeBuildRole ] ]
+
+  BuildRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Join [ "", [ !Ref RepositoryName, CodeBuildRolePolicy ] ]
+      Roles: 
+      - !Ref BuildRole
+      PolicyDocument:
+        Version:  "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Resource:
+          - !Join [ ":", [
+              arn:aws:logs:us-east-1,
+              !Ref AWS::AccountId,
+              log-group,
+              !Join [ "/", [ /aws/codebuild, !Ref RepositoryName ] ]
+            ]]
+          - !Join [ ":", [
+              arn:aws:logs:us-east-1,
+              !Ref AWS::AccountId,
+              log-group,
+              !Join [ "/", [ /aws/codebuild, !Ref RepositoryName ] ],
+              "*"
+            ]]
+          Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+        - Effect: Allow
+          Resource:
+            - !Join [ "-", [ arn:aws:s3:::codepipeline, !Ref AWS::Region, "*" ] ]
+          Action:
+          - s3:PutObject
+          - s3:GetObject
+          - s3:GetObjectVersion
+          - s3:GetBucketAcl
+          - s3:GetBucketLocation
+        - Effect: Allow
+          Resource:
+          - !Join [ ":", [
+              arn:aws:codecommit,
+              !Ref AWS::Region,
+              !Ref AWS::AccountId,
+              !Ref RepositoryName
+            ]]
+          Action:
+          - codecommit:GitPull
+        - Effect: Allow
+          Resource:
+          - !Join [ ":", [ "arn:aws:s3::", !Ref ArtifactBucket ] ]
+          - !Join [ ":", [ 
+              "arn:aws:s3::",
+              !Join [ "/", [ !Ref ArtifactBucket, "*" ] ]
+            ]]
+          Action:
+          - s3:PutObject
+          - s3:GetBucketAcl
+          - s3:GetBucketLocation
+        - Effect: Allow
+          Resource:
+          - !Join [ ":", [
+              arn:aws:codebuild,
+              !Ref AWS::Region,
+              !Ref AWS::AccountId,
+              !Join [ "/", [ report-group, !Join [ "-", [ foo, "*" ] ] ] ]
+            ]]
+          Action:
+          - codebuild:CreateReportGroup
+          - codebuild:CreateReport
+          - codebuild:UpdateReport
+          - codebuild:BatchPutTestCases
+          - codebuild:BatchPutCodeCoverages
+
+Outputs:
+  Repository:
+    Description: A reference to the git repository of the application.
+    Value: !Ref Repository
+
+  Project:
+    Description: A reference to the CodeBuild project of the application.
+    Value: !Ref BuildProject
