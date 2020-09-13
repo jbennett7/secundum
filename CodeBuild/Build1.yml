@@ -5,37 +5,30 @@ Parameters:
   EnvironmentName:
     Description: An environment name that is prefixed to resources.
     Type: String
-    Default: DevOpsProfessional
 
-  RepositoryName:
+  ApplicationName:
     Description: Name of the repository.
     Type: String
-    Default: Hello
 
   InputBucket:
     Description: Bucket used to feed the repository file in zip format.
     Type: String
-    Default: jbennettconsulting
 
   InputKey:
     Description: The key value for the file in zip format.
     Type: String
-    Default: codebuild.zip
 
   ArtifactBucket:
     Description: Bucket where CodeBuild artifacts are deposited.
     Type: String
-    Default: jbennettconsulting
 
   ArtifactPath:
     Description: The path inside the ArtifactBucket where artifacts are deposited.
     Type: String
-    Default: artifacts
 
   ArtifactKey:
     Description: The artifact name.
     Type: String
-    Default: hello.out
 
 Resources:
   Repository:
@@ -46,7 +39,7 @@ Resources:
           Bucket: !Ref InputBucket
           Key: !Ref InputKey
       RepositoryDescription: !Join [ " ", [ !Ref InputKey, repository ] ]
-      RepositoryName: !Ref RepositoryName
+      RepositoryName: !Ref ApplicationName
 
   BuildProject:
     Type: AWS::CodeBuild::Project
@@ -62,7 +55,7 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         Image: aws/codebuild/standard:4.0
         Type: LINUX_CONTAINER
-      Name: !Ref RepositoryName
+      Name: !Ref ApplicationName
       ServiceRole: !Ref BuildRole
       Source:
         Type: CODECOMMIT
@@ -80,14 +73,14 @@ Resources:
             Service: codebuild.amazonaws.com
           Action:
           - sts:AssumeRole
-      Description: !Join [ " ", [ !Ref RepositoryName, "application build role." ] ]
+      Description: !Join [ " ", [ !Ref ApplicationName, "application build role." ] ]
       Path: /
-      RoleName: !Join [ "", [ !Ref RepositoryName, CodeBuildRole ] ]
+      RoleName: !Join [ "", [ !Ref ApplicationName, CodeBuildRole ] ]
 
   BuildRolePolicy:
     Type: AWS::IAM::Policy
     Properties:
-      PolicyName: !Join [ "", [ !Ref RepositoryName, CodeBuildRolePolicy ] ]
+      PolicyName: !Join [ "", [ !Ref ApplicationName, CodeBuildRolePolicy ] ]
       Roles: 
       - !Ref BuildRole
       PolicyDocument:
@@ -99,13 +92,13 @@ Resources:
               arn:aws:logs:us-east-1,
               !Ref AWS::AccountId,
               log-group,
-              !Join [ "/", [ /aws/codebuild, !Ref RepositoryName ] ]
+              !Join [ "/", [ /aws/codebuild, !Ref ApplicationName ] ]
             ]]
           - !Join [ ":", [
               arn:aws:logs:us-east-1,
               !Ref AWS::AccountId,
               log-group,
-              !Join [ "/", [ /aws/codebuild, !Ref RepositoryName ] ],
+              !Join [ "/", [ /aws/codebuild, !Ref ApplicationName ] ],
               "*"
             ]]
           Action:
@@ -127,7 +120,7 @@ Resources:
               arn:aws:codecommit,
               !Ref AWS::Region,
               !Ref AWS::AccountId,
-              !Ref RepositoryName
+              !Ref ApplicationName
             ]]
           Action:
           - codecommit:GitPull
@@ -148,7 +141,7 @@ Resources:
               arn:aws:codebuild,
               !Ref AWS::Region,
               !Ref AWS::AccountId,
-              !Join [ "/", [ report-group, !Join [ "-", [ foo, "*" ] ] ] ]
+              !Join [ "/", [ report-group, !Join [ "-", [ !Ref ApplicationName, "*" ] ] ] ]
             ]]
           Action:
           - codebuild:CreateReportGroup
