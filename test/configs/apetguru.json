@@ -1,0 +1,14 @@
+[
+  {
+    "ParameterKey": "ApplicationName",
+    "ParameterValue": "apetguru"
+  },
+  {
+    "ParameterKey": "EnvironmentName",
+    "ParameterValue": "DevOpsProfessional"
+  },
+  {
+    "ParameterKey": "VpcStackName",
+    "ParameterValue": "DevOpsVpc"
+  }
+]

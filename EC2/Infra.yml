@@ -1,0 +1,260 @@
+---
+Description: An environment with three instances in an ASG and an ELB.
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that is prefixed to resources.
+    Type: String
+
+  ApplicationName:
+    Description: Application Name
+    Type: String
+
+  VpcStackName:
+    Description: Name of the Vpc to implement this infrastructure.
+    Type: String
+
+  AmiImageId:
+    Type: String
+    Default: ami-06b263d6ceff0b3dd
+
+Resources:
+  EC2CodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSCodeDeployFullAccess
+      - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      RoleName: ec2codedeploy
+      Description: EC2 Role for accessing CodeDeploy
+
+  CodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 
+            - codedeploy.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+      RoleName: codedeployer
+      Description: CodeDeploy Role
+
+  ELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ELB security group
+      GroupName: ELBSG
+      VpcId:
+        Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        Description: Port 80
+        FromPort: 80
+        ToPort: 80
+        IpProtocol: tcp
+      Tags:
+      - Key: Name
+        Value: !Ref EnvironmentName
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: ELBSecurityGroup
+    Properties:
+      GroupDescription: Application security group
+      GroupName: AppSG
+      VpcId:
+        Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        Description: SSH access
+        FromPort: 22
+        ToPort: 22
+        IpProtocol: tcp
+      - SourceSecurityGroupId: !Ref ELBSecurityGroup
+        Description: Port 80 Access only by ELB
+        FromPort: 80
+        ToPort: 80
+        IpProtocol: tcp
+      Tags:
+      - Key: Name
+        Value: !Ref EnvironmentName
+
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Join [ "", [ !Ref ApplicationName, LaunchTemplate ] ]
+      LaunchTemplateData:
+        ImageId: !Ref AmiImageId
+        InstanceType: t2.micro
+        KeyName: foobar
+        SecurityGroupIds:
+        - !Ref AppSecurityGroup
+        UserData: !Base64 |
+          #!/bin/bash
+          sudo apt-get update -y
+          sudo apt-get install ruby -y
+          sudo apt-get install wget -y
+          cd /home/ubuntu
+          wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
+          chmod +x ./install
+          sudo ./install auto
+          service codedeploy-agent start
+          rm install
+        TagSpecifications:
+        - ResourceType: instance
+          Tags:
+          - Key: Name
+            Value: !Ref EnvironmentName
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
+      TargetType: instance
+      Protocol: HTTP
+      Port: 80
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200'
+      VpcId:
+        Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
+
+  AppListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref AppTargetGroup
+      LoadBalancerArn: !Ref AppELB
+      Port: 80
+      Protocol: HTTP
+
+  AppELB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      IpAddressType: ipv4
+      Name: !Join [ "", [ !Ref ApplicationName, ELB ] ]
+      Scheme: internet-facing
+      SecurityGroups:
+      - !Ref AppSecurityGroup
+      Subnets: 
+        Fn::Split: 
+        - ","
+        - Fn::ImportValue:
+            !Sub "${VpcStackName}-SubnetIds"
+      Tags:
+      - Key: Name
+        Value: !Ref EnvironmentName
+      Type: application
+
+
+  AppASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+#    CreationPolicy:
+#      ResourceSignal:
+#        Timeout: PT15M
+#        Count: 2
+#    UpdatePolicy:
+#      AutoScalingRollingUpdate:
+#        MaxBatchSize: 1
+#        MinInstancesInService: 1
+#        PauseTime: PT15M
+#        WaitOnResourceSignals: true
+    Properties:
+      VPCZoneIdentifier:
+        Fn::Split:
+        - ","
+        - Fn::ImportValue:
+            !Sub "${VpcStackName}-SubnetIds"
+      AutoScalingGroupName: !Join [ "", [ !Ref ApplicationName, ASG ] ]
+      DesiredCapacity: 3
+      MinSize: 3
+      MaxSize: 3
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      TargetGroupARNs:
+      - !Ref AppTargetGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppLaunchTemplate
+        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+
+  AppCodeDeploy:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Join [ "", [ !Ref ApplicationName, CodeDeploy ] ]
+      ComputePlatform: Server
+
+  AppCodeDeployGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    DependsOn:
+    - AppASG
+    Properties:
+      ApplicationName: !Join [ "", [ !Ref ApplicationName, CodeDeploy ] ]
+      DeploymentGroupName: !Join [ "", [ !Ref ApplicationName, DeploymentGroup ] ]
+      Deployment:
+        Revision:
+          RevisionType: S3
+          S3Location:
+            Bucket: jbennettconsulting
+            BundleType: zip
+            Key: apetguru.zip
+      DeploymentConfigName: CodeDeployDefault.AllAtOnce
+#     DeploymentStyle:
+#       DeploymentOption: WITH_TRAFFIC_CONTROL
+#       DeploymentType: IN_PLACE
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      AutoScalingGroups:
+      - !Join [ "", [ !Ref ApplicationName, ASG ] ]
+      Ec2TagSet:
+        Ec2TagSetList:
+        - Ec2TagGroup:
+          - Key: EnvironmentName
+            Type: KEY_AND_VALUE
+            Value: DevOpsProfessional
+#     LoadBalancerInfo:
+#       TargetGroupInfoList:
+#       - Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
+
+#  AppCodeDeployConfig:
+#    Type: AWS::CodeDeploy::DeploymentConfig
+#    Properties:
+#      DeploymentConfigName: !Join [ "", [ !Ref ApplicationName, CodeDeployConfig ] ]
+#      MinimumHealthyHosts: 
+
+Outputs:
+  CodeDeployerRole:
+    Description: The Arn of the CodeDeployer Role.
+    Value: !GetAtt CodeDeployRole.Arn
+    Export: { Name: !Join [ "-", [ !Ref ApplicationName, CodeDeployRoleArn ] ] }
+
+  AppELB:
+    Description: A reference to the Applicaton's ELB.
+    Value: !Ref AppELB
+    Export: { Name: !Join [ "-", [ !Ref AWS::StackName, !Ref ApplicationName, ElbId ] ] }
+
+  AppDNSName:
+    Description: The AWS DNS Name.
+    Value: !GetAtt AppELB.DNSName
+    Export: { Name: !Join [ "-", [ !Ref AWS::StackName, !Ref ApplicationName, DNSName ] ] }
+...
