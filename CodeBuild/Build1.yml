@@ -1,5 +1,5 @@
 ---
-Description: The IAM Role used to build the hello application.
+Description: Deploy an application in codecommit and setup a build project.
 
 Parameters:
   EnvironmentName:

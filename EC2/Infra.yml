@@ -38,6 +38,14 @@ Resources:
       RoleName: ec2codedeploy
       Description: EC2 Role for accessing CodeDeploy
 
+  EC2CodeDeployInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: ec2codedeploy
+      Path: /
+      Roles:
+      - !Ref EC2CodeDeployRole
+
   CodeDeployRole:
     Type: AWS::IAM::Role
     Properties:
@@ -98,6 +106,31 @@ Resources:
 
   AppLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
+#    Metadata:
+#      AWS::CloudFormation::Init:
+#        configSets:
+#          ascending:
+#          - config1
+#          - config2
+#          descending:
+#          - config2
+#          - config1
+#        config1:
+#          packages:
+#            apt:
+#              ruby: []
+#              wget: []
+#        config2:
+#          commands:
+#          - "wget -O /tmp/install https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install"
+#          - "chmod +x /tmp/install"
+#          - "sudo /tmp/install auto"
+#          - "rm /tmp/install"
+#          services:
+#            sysvinit:
+#              codeploy-agent:
+#                enabled: true
+#                ensureRunning: true
     Properties:
       LaunchTemplateName: !Join [ "", [ !Ref ApplicationName, LaunchTemplate ] ]
       LaunchTemplateData:
@@ -106,6 +139,23 @@ Resources:
         KeyName: foobar
         SecurityGroupIds:
         - !Ref AppSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt EC2CodeDeployInstanceProfile.Arn
+#        UserData: !Base64 |
+#          #!/bin/bash
+#          apt-get update
+#          apt-get -y install python-pip
+#          pip install \
+#            https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+#          cp /usr/local/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
+#          chmod +x /etc/init.d/cfn-hup
+#          update-rc.d cfn-hup defaults
+#          service cfn-hup start
+#          /opt/aws/bin/cfn-init -v \
+#            --stack !Ref AWS::StackName \
+#            --resource AppLaunchTemplate \
+#            --configsets config1,config2 \
+#            --region !Ref AWS::Region
         UserData: !Base64 |
           #!/bin/bash
           sudo apt-get update -y
@@ -157,7 +207,7 @@ Resources:
       Name: !Join [ "", [ !Ref ApplicationName, ELB ] ]
       Scheme: internet-facing
       SecurityGroups:
-      - !Ref AppSecurityGroup
+      - !Ref ELBSecurityGroup
       Subnets: 
         Fn::Split: 
         - ","
@@ -220,21 +270,21 @@ Resources:
             BundleType: zip
             Key: apetguru.zip
       DeploymentConfigName: CodeDeployDefault.AllAtOnce
-#     DeploymentStyle:
-#       DeploymentOption: WITH_TRAFFIC_CONTROL
-#       DeploymentType: IN_PLACE
+      DeploymentStyle:
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+        DeploymentType: IN_PLACE
       ServiceRoleArn: !GetAtt CodeDeployRole.Arn
       AutoScalingGroups:
       - !Join [ "", [ !Ref ApplicationName, ASG ] ]
-      Ec2TagSet:
-        Ec2TagSetList:
-        - Ec2TagGroup:
-          - Key: EnvironmentName
-            Type: KEY_AND_VALUE
-            Value: DevOpsProfessional
-#     LoadBalancerInfo:
-#       TargetGroupInfoList:
-#       - Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
+#     Ec2TagSet:
+#       Ec2TagSetList:
+#       - Ec2TagGroup:
+#         - Key: EnvironmentName
+#           Type: KEY_AND_VALUE
+#           Value: DevOpsProfessional
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+        - Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
 
 #  AppCodeDeployConfig:
 #    Type: AWS::CodeDeploy::DeploymentConfig
