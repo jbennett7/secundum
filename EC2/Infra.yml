@@ -19,6 +19,16 @@ Parameters:
     Default: ami-06b263d6ceff0b3dd
 
 Resources:
+  AppCodeCommit:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        S3:
+          Bucket: jbennettconsulting
+          Key: apetguru.zip
+      RepositoryDescription: apetguru
+      RepositoryName: apetguru
+
   EC2CodeDeployRole:
     Type: AWS::IAM::Role
     Properties:
@@ -64,6 +74,50 @@ Resources:
       RoleName: codedeployer
       Description: CodeDeploy Role
 
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+    - AppCodeCommit
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codepipeline.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: AccessCodeCommit
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Action: "*"
+#            - codecommit:GetBranch
+#            - codecommit:GetCommt
+#            - codecommit:UploadArchive
+#            - codecommit:GetUploadArchiveStatus
+#            - codecommit:CancelUploadArchive
+            Resource:
+            - !GetAtt AppCodeCommit.Arn
+          - Effect: Allow
+            Action:
+            - codedeploy:CreateDeployment
+            - codedeploy:GetDeployment
+            - codedeploy:GetApplication
+            - codedeploy:GetApplicationRevision
+            - codedeploy:RegisterApplicationRevision
+            - codedeploy:GetDeploymentConfig
+            - ecs:RegisterTaskDefinition
+            - iam:PassRole
+            Resource: "*"
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      RoleName: codepipelinerole
+      Description: CodePipeline Role
+
   ELBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -106,31 +160,6 @@ Resources:
 
   AppLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
-#    Metadata:
-#      AWS::CloudFormation::Init:
-#        configSets:
-#          ascending:
-#          - config1
-#          - config2
-#          descending:
-#          - config2
-#          - config1
-#        config1:
-#          packages:
-#            apt:
-#              ruby: []
-#              wget: []
-#        config2:
-#          commands:
-#          - "wget -O /tmp/install https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install"
-#          - "chmod +x /tmp/install"
-#          - "sudo /tmp/install auto"
-#          - "rm /tmp/install"
-#          services:
-#            sysvinit:
-#              codeploy-agent:
-#                enabled: true
-#                ensureRunning: true
     Properties:
       LaunchTemplateName: !Join [ "", [ !Ref ApplicationName, LaunchTemplate ] ]
       LaunchTemplateData:
@@ -141,21 +170,6 @@ Resources:
         - !Ref AppSecurityGroup
         IamInstanceProfile:
           Arn: !GetAtt EC2CodeDeployInstanceProfile.Arn
-#        UserData: !Base64 |
-#          #!/bin/bash
-#          apt-get update
-#          apt-get -y install python-pip
-#          pip install \
-#            https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
-#          cp /usr/local/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
-#          chmod +x /etc/init.d/cfn-hup
-#          update-rc.d cfn-hup defaults
-#          service cfn-hup start
-#          /opt/aws/bin/cfn-init -v \
-#            --stack !Ref AWS::StackName \
-#            --resource AppLaunchTemplate \
-#            --configsets config1,config2 \
-#            --region !Ref AWS::Region
         UserData: !Base64 |
           #!/bin/bash
           sudo apt-get update -y
@@ -221,16 +235,16 @@ Resources:
 
   AppASG:
     Type: AWS::AutoScaling::AutoScalingGroup
-#    CreationPolicy:
-#      ResourceSignal:
-#        Timeout: PT15M
-#        Count: 2
-#    UpdatePolicy:
-#      AutoScalingRollingUpdate:
-#        MaxBatchSize: 1
-#        MinInstancesInService: 1
-#        PauseTime: PT15M
-#        WaitOnResourceSignals: true
+#   CreationPolicy:
+#     ResourceSignal:
+#       Timeout: PT15M
+#       Count: 2
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: 1
+        MinInstancesInService: 1
+        PauseTime: PT15M
+        WaitOnResourceSignals: true
     Properties:
       VPCZoneIdentifier:
         Fn::Split:
@@ -276,21 +290,48 @@ Resources:
       ServiceRoleArn: !GetAtt CodeDeployRole.Arn
       AutoScalingGroups:
       - !Join [ "", [ !Ref ApplicationName, ASG ] ]
-#     Ec2TagSet:
-#       Ec2TagSetList:
-#       - Ec2TagGroup:
-#         - Key: EnvironmentName
-#           Type: KEY_AND_VALUE
-#           Value: DevOpsProfessional
       LoadBalancerInfo:
         TargetGroupInfoList:
         - Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
 
-#  AppCodeDeployConfig:
-#    Type: AWS::CodeDeploy::DeploymentConfig
-#    Properties:
-#      DeploymentConfigName: !Join [ "", [ !Ref ApplicationName, CodeDeployConfig ] ]
-#      MinimumHealthyHosts: 
+  AppCodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: jbennettconsulting
+        Type: S3
+      Name: !Join [ "", [ !Ref ApplicationName, Pipeline ] ]
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: SourceAction
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Version: 1
+            Provider: CodeCommit
+          OutputArtifacts:
+          - Name: SourceOutput
+          Configuration:
+            RepositoryName: !GetAtt AppCodeCommit.Name
+            BranchName: master
+            PollForSourceChanges: True
+          RunOrder: 1
+      - Name: Deploy
+        Actions:
+        - Name: DeployAction
+          InputArtifacts:
+          - Name: SourceOutput
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Provider: CodeDeploy
+            Version: 1
+          Configuration:
+            ApplicationName: !Ref AppCodeDeploy
+            DeploymentGroupName: !Ref AppCodeDeployGroup
+          RunOrder: 1
 
 Outputs:
   CodeDeployerRole:
