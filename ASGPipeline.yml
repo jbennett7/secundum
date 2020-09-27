@@ -73,8 +73,16 @@ Resources:
           Statement:
           - Effect: Allow
             Resource:
-            - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group/aws/codebuild/${ApplicationName}"
-            - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ApplicationName}:*"
+            - !Join 
+              - ":"
+              - - !Sub "arn:aws:logs:${AWS::Region}"
+                - !Sub "${AWS::AccountId}"
+                - !Sub "log-group/aws/codebuild/${ApplicationName}"
+            - !Join
+              - ":"
+              - - !Sub "arn:aws:logs:${AWS::Region}"
+                - !Sub "${AWS::AccountId}:log-group"
+                - !Sub "/aws/codebuild/${ApplicationName}:*"
             Action:
             - logs:CreateLogGroup
             - logs:CreateLogStream
@@ -91,7 +99,10 @@ Resources:
             - s3:GetBucketLocation
           - Effect: Allow
             Resource:
-            - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${ApplicationName}"
+            - !Join 
+              - ":"
+              - - !Sub "arn:aws:codecommit:${AWS::Region}"
+                - !Sub "${AWS::AccountId}:${ApplicationName}"
             Action:
             - codecommit:GitPull
           - Effect: Allow
@@ -104,7 +115,10 @@ Resources:
             - s3:GetBucketLocation
           - Effect: Allow
             Resource:
-            - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/${ApplicationName}-*"
+            - !Join 
+              - ":"
+              - - !Sub "arn:aws:codebuild:${AWS::Region}"
+                - !Sub "${AWS::AccountId}:report-group/${ApplicationName}-*"
             Action:
             - codebuild:CreateReportGroup
             - codebuild:CreateReport
@@ -354,7 +368,11 @@ Resources:
   CodeDeploy:
     Type: AWS::CodeDeploy::Application
     Properties:
-      ApplicationName: !Join [ "", [ !Ref ApplicationName, CodeDeploy ] ]
+      ApplicationName:
+        !Join 
+        - ""
+        - - !Ref ApplicationName
+          - CodeDeploy
       ComputePlatform: Server
 
   CodeDeployGroup:
@@ -362,18 +380,33 @@ Resources:
     DependsOn:
     - AutoScalingGroup
     Properties:
-      ApplicationName: !Join [ "", [ !Ref ApplicationName, CodeDeploy ] ]
-      DeploymentGroupName: !Join [ "", [ !Ref ApplicationName, DeploymentGroup ] ]
+      ApplicationName:
+        !Join
+        - ""
+        - - !Ref ApplicationName
+          - CodeDeploy
+      DeploymentGroupName:
+        !Join
+        - ""
+        - - !Ref ApplicationName
+          - DeploymentGroup
       DeploymentConfigName: CodeDeployDefault.AllAtOnce
       DeploymentStyle:
         DeploymentOption: WITH_TRAFFIC_CONTROL
         DeploymentType: IN_PLACE
       ServiceRoleArn: !GetAtt CodeDeployRole.Arn
       AutoScalingGroups:
-      - !Join [ "", [ !Ref ApplicationName, ASG ] ]
+      - !Join
+        - ""
+        - - !Ref ApplicationName
+          - ASG
       LoadBalancerInfo:
         TargetGroupInfoList:
-        - Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
+        - Name:
+            !Join
+            - ""
+            - - !Ref ApplicationName
+              - TargetGroup
 
   CodePipeline:
     Type: AWS::CodePipeline::Pipeline
@@ -381,7 +414,11 @@ Resources:
       ArtifactStore:
         Location: !Ref BucketName
         Type: S3
-      Name: !Join [ "", [ !Ref ApplicationName, Pipeline ] ]
+      Name:
+        !Join
+        - ""
+        - - !Ref ApplicationName
+          - Pipeline
       RoleArn: !GetAtt CodePipelineRole.Arn
       Stages:
       - Name: Source
@@ -436,7 +473,9 @@ Outputs:
       Name:
         !Join
         - "-"
-        - [ !Ref AWS::StackName, !Ref ApplicationName, CodeDeployRoleArn ]
+        - - !Ref AWS::StackName
+          - !Ref ApplicationName
+          - CodeDeployRoleArn
 
   LoadBalancer:
     Description: A reference to the Applicaton's ELB.
@@ -445,7 +484,9 @@ Outputs:
       Name:
         !Join
         - "-"
-        - [ !Ref AWS::StackName, !Ref ApplicationName, ElbId ]
+        - - !Ref AWS::StackName
+          - !Ref ApplicationName
+          - ElbId
 
   DNSName:
     Description: The AWS DNS Name.
@@ -454,5 +495,7 @@ Outputs:
       Name:
         !Join
         - "-"
-        - [ !Ref AWS::StackName, !Ref ApplicationName, DNSName ]
+        - - !Ref AWS::StackName
+          - !Ref ApplicationName
+          - DNSName
 ...
