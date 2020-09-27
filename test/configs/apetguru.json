@@ -10,5 +10,17 @@
   {
     "ParameterKey": "VpcStackName",
     "ParameterValue": "DevOpsVpc"
+  },
+  {
+    "ParameterKey": "AmiImageId",
+    "ParameterValue": "ami-0dba2cb6798deb6d8"
+  },
+  {
+    "ParameterKey": "BucketName",
+    "ParameterValue": "jbennettconsulting"
+  },
+  {
+    "ParameterKey": "InstanceKey",
+    "ParameterValue": "foobar"
   }
 ]

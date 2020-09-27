@@ -1,5 +1,5 @@
 ---
-Description: An environment with three instances in an ASG and an ELB.
+Description: CI/CD Environment
 
 Parameters:
   EnvironmentName:
@@ -15,21 +15,18 @@ Parameters:
     Type: String
 
   AmiImageId:
+    Description: EC2 Instance AMI Image.
     Type: String
-    Default: ami-06b263d6ceff0b3dd
+
+  BucketName:
+    Description: The Name of the S3 bucket 
+    Type: String
+
+  InstanceKey:
+    Type: String
 
 Resources:
-  AppCodeCommit:
-    Type: AWS::CodeCommit::Repository
-    Properties:
-      Code:
-        S3:
-          Bucket: jbennettconsulting
-          Key: apetguru.zip
-      RepositoryDescription: apetguru
-      RepositoryName: apetguru
-
-  EC2CodeDeployRole:
+  EC2ApplicationRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -48,13 +45,75 @@ Resources:
       RoleName: ec2codedeploy
       Description: EC2 Role for accessing CodeDeploy
 
-  EC2CodeDeployInstanceProfile:
+  EC2ApplicationInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       InstanceProfileName: ec2codedeploy
       Path: /
       Roles:
-      - !Ref EC2CodeDeployRole
+      - !Ref EC2ApplicationRole
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codebuild.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: CodeBuildPolicy
+        PolicyDocument:
+          Version: 2012-10-17
+          Statement:
+          - Effect: Allow
+            Resource:
+            - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group/aws/codebuild/${ApplicationName}"
+            - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ApplicationName}:*"
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          - Effect: Allow
+            Resource:
+            - !Sub "arn:aws:s3:::${BucketName}"
+            - !Sub "arn:aws:s3:::${BucketName}/apetguruPipeline/SourceOutp/*"
+            Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetBucketAcl
+            - s3:GetBucketLocation
+          - Effect: Allow
+            Resource:
+            - !Sub "arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${ApplicationName}"
+            Action:
+            - codecommit:GitPull
+          - Effect: Allow
+            Resource:
+            - !Sub "arn:aws:s3:::${BucketName}"
+            - !Sub "arn:aws:s3:::${BucketName}/*"
+            Action:
+            - s3:PutObject
+            - s3:GetBucketAcl
+            - s3:GetBucketLocation
+          - Effect: Allow
+            Resource:
+            - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/${ApplicationName}-*"
+            Action:
+            - codebuild:CreateReportGroup
+            - codebuild:CreateReport
+            - codebuild:UpdateReport
+            - codebuild:BatchPutTestCases
+            - codebuild:BatchPutTestCases
+            - codebuild:BatchPutCodeCoverages
+      RoleName: codebuilder
+      Description: CodeBuild Service Role
 
   CodeDeployRole:
     Type: AWS::IAM::Role
@@ -72,12 +131,12 @@ Resources:
       ManagedPolicyArns:
       - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
       RoleName: codedeployer
-      Description: CodeDeploy Role
+      Description: CodeDeploy Service Role
 
   CodePipelineRole:
     Type: AWS::IAM::Role
     DependsOn:
-    - AppCodeCommit
+    - CodeCommit
     Properties:
       AssumeRolePolicyDocument:
         Version: 2012-10-17
@@ -94,14 +153,14 @@ Resources:
           Version: 2012-10-17
           Statement:
           - Effect: Allow
-            Action: "*"
-#            - codecommit:GetBranch
-#            - codecommit:GetCommt
-#            - codecommit:UploadArchive
-#            - codecommit:GetUploadArchiveStatus
-#            - codecommit:CancelUploadArchive
+            Action:
+            - codecommit:GetBranch
+            - codecommit:GetCommit
+            - codecommit:UploadArchive
+            - codecommit:GetUploadArchiveStatus
+            - codecommit:CancelUploadArchive
             Resource:
-            - !GetAtt AppCodeCommit.Arn
+            - !GetAtt CodeCommit.Arn
           - Effect: Allow
             Action:
             - codedeploy:CreateDeployment
@@ -113,6 +172,10 @@ Resources:
             - ecs:RegisterTaskDefinition
             - iam:PassRole
             Resource: "*"
+          - Effect: Allow
+            Action:
+            - codebuild:*
+            Resource: !GetAtt CodeBuild.Arn
       ManagedPolicyArns:
       - arn:aws:iam::aws:policy/AmazonS3FullAccess
       RoleName: codepipelinerole
@@ -135,7 +198,7 @@ Resources:
       - Key: Name
         Value: !Ref EnvironmentName
 
-  AppSecurityGroup:
+  EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     DependsOn: ELBSecurityGroup
     Properties:
@@ -158,18 +221,18 @@ Resources:
       - Key: Name
         Value: !Ref EnvironmentName
 
-  AppLaunchTemplate:
+  LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Join [ "", [ !Ref ApplicationName, LaunchTemplate ] ]
       LaunchTemplateData:
         ImageId: !Ref AmiImageId
         InstanceType: t2.micro
-        KeyName: foobar
+        KeyName: !Ref InstanceKey
         SecurityGroupIds:
-        - !Ref AppSecurityGroup
+        - !Ref EC2SecurityGroup
         IamInstanceProfile:
-          Arn: !GetAtt EC2CodeDeployInstanceProfile.Arn
+          Arn: !GetAtt EC2ApplicationInstanceProfile.Arn
         UserData: !Base64 |
           #!/bin/bash
           sudo apt-get update -y
@@ -179,7 +242,7 @@ Resources:
           wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
           chmod +x ./install
           sudo ./install auto
-          service codedeploy-agent start
+          sudo service codedeploy-agent start
           rm install
         TagSpecifications:
         - ResourceType: instance
@@ -187,7 +250,7 @@ Resources:
           - Key: Name
             Value: !Ref EnvironmentName
 
-  AppTargetGroup:
+  TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
@@ -204,17 +267,17 @@ Resources:
       VpcId:
         Fn::ImportValue: !Sub "${VpcStackName}-VpcId"
 
-  AppListener:
+  Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       DefaultActions:
       - Type: forward
-        TargetGroupArn: !Ref AppTargetGroup
-      LoadBalancerArn: !Ref AppELB
+        TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref LoadBalancer
       Port: 80
       Protocol: HTTP
 
-  AppELB:
+  LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       IpAddressType: ipv4
@@ -233,7 +296,7 @@ Resources:
       Type: application
 
 
-  AppASG:
+  AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
 #   CreationPolicy:
 #     ResourceSignal:
@@ -258,31 +321,49 @@ Resources:
       HealthCheckType: ELB
       HealthCheckGracePeriod: 300
       TargetGroupARNs:
-      - !Ref AppTargetGroup
+      - !Ref TargetGroup
       LaunchTemplate:
-        LaunchTemplateId: !Ref AppLaunchTemplate
-        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
 
-  AppCodeDeploy:
+  CodeCommit:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      Code:
+        S3:
+          Bucket: !Ref BucketName
+          Key: !Sub "${ApplicationName}.zip"
+      RepositoryDescription: !Sub "${ApplicationName}"
+      RepositoryName: !Sub "${ApplicationName}"
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref ApplicationName
+      Description: !Sub "Build ${ApplicationName}."
+      Environment:
+        Image: aws/codebuild/standard:4.0
+        ComputeType: BUILD_GENERAL1_SMALL
+        Type: LINUX_CONTAINER
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Source:
+        Type: CODEPIPELINE
+      Artifacts:
+        Type: CODEPIPELINE
+
+  CodeDeploy:
     Type: AWS::CodeDeploy::Application
     Properties:
       ApplicationName: !Join [ "", [ !Ref ApplicationName, CodeDeploy ] ]
       ComputePlatform: Server
 
-  AppCodeDeployGroup:
+  CodeDeployGroup:
     Type: AWS::CodeDeploy::DeploymentGroup
     DependsOn:
-    - AppASG
+    - AutoScalingGroup
     Properties:
       ApplicationName: !Join [ "", [ !Ref ApplicationName, CodeDeploy ] ]
       DeploymentGroupName: !Join [ "", [ !Ref ApplicationName, DeploymentGroup ] ]
-      Deployment:
-        Revision:
-          RevisionType: S3
-          S3Location:
-            Bucket: jbennettconsulting
-            BundleType: zip
-            Key: apetguru.zip
       DeploymentConfigName: CodeDeployDefault.AllAtOnce
       DeploymentStyle:
         DeploymentOption: WITH_TRAFFIC_CONTROL
@@ -294,11 +375,11 @@ Resources:
         TargetGroupInfoList:
         - Name: !Join [ "", [ !Ref ApplicationName, TargetGroup ] ]
 
-  AppCodePipeline:
+  CodePipeline:
     Type: AWS::CodePipeline::Pipeline
     Properties:
       ArtifactStore:
-        Location: jbennettconsulting
+        Location: !Ref BucketName
         Type: S3
       Name: !Join [ "", [ !Ref ApplicationName, Pipeline ] ]
       RoleArn: !GetAtt CodePipelineRole.Arn
@@ -306,46 +387,72 @@ Resources:
       - Name: Source
         Actions:
         - Name: SourceAction
+          OutputArtifacts:
+          - Name: SourceOutput
           ActionTypeId:
             Category: Source
             Owner: AWS
             Version: 1
             Provider: CodeCommit
-          OutputArtifacts:
-          - Name: SourceOutput
           Configuration:
-            RepositoryName: !GetAtt AppCodeCommit.Name
+            RepositoryName: !GetAtt CodeCommit.Name
             BranchName: master
             PollForSourceChanges: True
           RunOrder: 1
+      - Name: Build
+        Actions:
+        - Name: Build
+          Configuration:
+            ProjectName: !Ref ApplicationName
+          InputArtifacts:
+          - Name: SourceOutput
+          OutputArtifacts:
+          - Name: BuildOutput
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Provider: CodeBuild
+            Version: 1
       - Name: Deploy
         Actions:
         - Name: DeployAction
           InputArtifacts:
-          - Name: SourceOutput
+          - Name: BuildOutput
           ActionTypeId:
             Category: Deploy
             Owner: AWS
             Provider: CodeDeploy
             Version: 1
           Configuration:
-            ApplicationName: !Ref AppCodeDeploy
-            DeploymentGroupName: !Ref AppCodeDeployGroup
+            ApplicationName: !Ref CodeDeploy
+            DeploymentGroupName: !Ref CodeDeployGroup
           RunOrder: 1
 
 Outputs:
   CodeDeployerRole:
     Description: The Arn of the CodeDeployer Role.
     Value: !GetAtt CodeDeployRole.Arn
-    Export: { Name: !Join [ "-", [ !Ref ApplicationName, CodeDeployRoleArn ] ] }
+    Export:
+      Name:
+        !Join
+        - "-"
+        - [ !Ref AWS::StackName, !Ref ApplicationName, CodeDeployRoleArn ]
 
-  AppELB:
+  LoadBalancer:
     Description: A reference to the Applicaton's ELB.
-    Value: !Ref AppELB
-    Export: { Name: !Join [ "-", [ !Ref AWS::StackName, !Ref ApplicationName, ElbId ] ] }
+    Value: !Ref LoadBalancer
+    Export: 
+      Name:
+        !Join
+        - "-"
+        - [ !Ref AWS::StackName, !Ref ApplicationName, ElbId ]
 
-  AppDNSName:
+  DNSName:
     Description: The AWS DNS Name.
-    Value: !GetAtt AppELB.DNSName
-    Export: { Name: !Join [ "-", [ !Ref AWS::StackName, !Ref ApplicationName, DNSName ] ] }
+    Value: !GetAtt LoadBalancer.DNSName
+    Export:
+      Name:
+        !Join
+        - "-"
+        - [ !Ref AWS::StackName, !Ref ApplicationName, DNSName ]
 ...
